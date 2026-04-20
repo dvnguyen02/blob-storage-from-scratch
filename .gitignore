@@ -1,0 +1,21 @@
+# build outputs
+bin/ 
+obj/
+
+# VSCode settings 
+*.user
+
+# Runtime blob directory 
+storage/
+
+# SQLite files 
+*.db 
+*.db-journal 
+
+# IDE metadata
+.vs/ 
+.idea/ 
+
+# docs 
+docs/
+

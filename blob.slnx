@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BlobServer.Core/BlobServer.Core.csproj" />
+    <Project Path="src/BlobServer/BlobServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BlobServer.Tests/BlobServer.Tests.csproj" />
+  </Folder>
+</Solution>

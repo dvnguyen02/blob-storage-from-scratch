@@ -26,17 +26,20 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task GetMissingBlob()
     {
-        var respond = await _client.GetAsync("testcontainer/missingblob.txt");
+        var respond = await _client.GetAsync("/testcontainer/missingblob.txt");
         Assert.Equal(System.Net.HttpStatusCode.NotFound, respond.StatusCode);
     }
 
     [Fact]
     public async Task DeleteThenGet()
     {
-        var del = await _client.DeleteAsync("/testcontainer/hello.txt");
+        var content = new StringContent("to be deleted");
+        await _client.PutAsync("/testcontainer/deleteme.txt", content);
+
+        var del = await _client.DeleteAsync("/testcontainer/deleteme.txt");
         del.EnsureSuccessStatusCode();
 
-        var get = await _client.GetAsync("/testcontainer/hello.txt");
-        Assert.Equal(System.Net.HttpStatusCode.NotFound, get.StatusCode);
+        var response = await _client.GetAsync("/testcontainer/deleteme.txt");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
     }
 }

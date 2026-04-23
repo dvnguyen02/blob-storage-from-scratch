@@ -13,10 +13,11 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<BlobDbContext>().Database.EnsureCreated();
 
-app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequest request, BlobService service, CancellationToken ct) =>
+app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
     var contentType = request.ContentType;
-    await service.PutAsync(container, blob, request.Body, contentType, ct);
+    var blobRow = await service.PutAsync(container, blob, request.Body, contentType, ct);
+    httpContext.Response.Headers.ETag = blobRow.ETag;
     return Results.Ok();
 });
 

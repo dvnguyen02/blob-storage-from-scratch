@@ -1,6 +1,6 @@
 namespace BlobServer.Core.Services;
 
-using System.Data;
+using System.Security.Cryptography;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Metadata.Entities;
 using BlobServer.Core.Storage;
@@ -15,7 +15,7 @@ public class BlobService
         this.store = store;
     }
 
-    public async Task PutAsync(string container, string name, Stream content, string? contentType, CancellationToken ct)
+    public async Task<Blob> PutAsync(string container, string name, Stream content, string? contentType, CancellationToken ct)
     {
         var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == container, ct);
         if (containerRow is null)
@@ -29,6 +29,11 @@ public class BlobService
         await content.CopyToAsync(buffer, ct);
         buffer.Position = 0;
         var size = buffer.Length;
+
+        var etag = MD5.HashData(buffer.ToArray());
+        string base64 = $"\"{Convert.ToBase64String(etag)}\"";
+
+
         await store.WriteAsync(container, name, buffer, ct);
         var blobRow = await db.Blobs.FirstOrDefaultAsync(b => b.ContainerId == containerRow.Id && b.Name == name, ct);
         if (blobRow is null)
@@ -39,7 +44,7 @@ public class BlobService
                 Name = name,
                 Size = size,
                 ContentType = contentType,
-                ETag = $"\"{Guid.NewGuid()}\"",
+                ETag = base64,
                 CreatedAt = DateTime.UtcNow,
                 ModifiedAt = DateTime.UtcNow
             };
@@ -50,11 +55,13 @@ public class BlobService
         {
             // update if the blob row already exsists
             blobRow.Size = size;
-            blobRow.ETag = $"\"{Guid.NewGuid()}\"";
+            blobRow.ETag = base64;
             blobRow.ContentType = contentType;
             blobRow.ModifiedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
         }
+
+        return blobRow;
 
     }
     public async Task<(Blob Blob, Stream BlobStream)?> GetAsync(string container, string name, CancellationToken ct)

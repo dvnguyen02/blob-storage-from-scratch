@@ -13,6 +13,17 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<BlobDbContext>().Database.EnsureCreated();
 
+app.MapPut("/{container}", async (string container, BlobService service, CancellationToken ct) =>
+{
+    var result = await service.CreateContainerAsync(container, ct);
+    if (result is true)
+    {
+        return Results.Created($"/{container}", null);
+    }
+    return Results.Conflict(new BlobError("ContainerAlreadyExists", "The specified container already exsists."));
+
+});
+
 app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
     var contentType = request.ContentType;

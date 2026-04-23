@@ -110,4 +110,17 @@ public class BlobService
         return true;
 
     }
+
+    public async Task<bool> CreateContainerAsync(string name, CancellationToken ct)
+    {
+        var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == name, ct);
+        if (containerRow is not null)
+        {
+            return false;
+        }
+        var container = new Container { Name = name, CreatedAt = DateTime.UtcNow };
+        await db.Containers.AddAsync(container);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
 }

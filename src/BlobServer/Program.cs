@@ -38,3 +38,8 @@ app.MapDelete("/{container}/{blob}", async (string container, string blob, BlobS
 });
 
 app.Run();
+
+public partial class Program
+{
+
+}

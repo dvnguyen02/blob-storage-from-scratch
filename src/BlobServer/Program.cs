@@ -1,3 +1,4 @@
+using BlobServer.Core.Errors;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Services;
 using BlobServer.Core.Storage;
@@ -24,7 +25,7 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
     var result = await service.GetAsync(container, blob, ct);
     if (result is null)
     {
-        return Results.NotFound();
+        return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
     }
     return Results.Stream(result.Value.BlobStream, result.Value.Blob.ContentType);
 });
@@ -33,7 +34,7 @@ app.MapDelete("/{container}/{blob}", async (string container, string blob, BlobS
 {
 
     var deleted = await service.DeleteAsync(container, blob, ct);
-    return deleted ? Results.NoContent() : Results.NotFound();
+    return deleted ? Results.NoContent() : Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
 
 });
 

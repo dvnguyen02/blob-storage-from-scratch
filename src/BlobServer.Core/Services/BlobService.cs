@@ -81,22 +81,17 @@ public class BlobService
         return (blobRow, stream);
     }
 
-    // public async Task<List<string>> ListAsync(string container, CancellationToken ct)
-    // {
-    //     var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == container, ct);
-    //     if (containerRow is null)
-    //     {
-    //         return null;
-    //     }
-    //     var blobRows = db.Blobs.FirstOrDefaultAsync(b => b.ContainerId == containerRow.Id);
-    //     List<string> blobNames = new List<string>();
-    //     foreach (row in blobRows)
-    //     {
-    //         blobNames.Add(row.Name);
-    //     }
-    //     return blobNames;
+    public async Task<List<Blob>?> ListAsync(string container, CancellationToken ct)
+    {
+        var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == container, ct);
+        if (containerRow is null)
+        {
+            return null;
+        }
+        var blobRows = await db.Blobs.Where(b => b.ContainerId == containerRow.Id).ToListAsync(ct);
+        return blobRows;
 
-    // }
+    }
 
     public async Task<bool> DeleteAsync(string container, string name, CancellationToken ct)
     {

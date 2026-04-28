@@ -1,5 +1,6 @@
 namespace BlobServer.Core.Services;
 
+using System.Diagnostics.Tracing;
 using System.Security.Cryptography;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Metadata.Entities;
@@ -117,5 +118,20 @@ public class BlobService
         await db.Containers.AddAsync(container);
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    public async Task<string?> GetBlobTagAsync(string name, string container, CancellationToken ct)
+    {
+        var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == container, ct);
+        if (containerRow is null)
+        {
+            return null;
+        }
+        var blobRow = await db.Blobs.FirstOrDefaultAsync(b => b.Name == name && b.ContainerId == containerRow.Id, ct);
+        if (blobRow is null)
+        {
+            return null;
+        }
+        return blobRow.ETag;
     }
 }

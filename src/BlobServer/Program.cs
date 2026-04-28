@@ -28,17 +28,29 @@ app.MapPut("/{container}", async (string container, BlobService service, Cancell
 app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
     var contentType = request.ContentType;
+    var currentEtag = await service.GetBlobTagAsync(blob, container, ct);
+    // Check If Match header first 
+    var ifMatch = httpContext.Request.Headers.IfMatch.ToString();
+    if (ifMatch != string.Empty && currentEtag != ifMatch)
+    {
+        return Results.StatusCode(412);
+    }
+    // Then write
     var blobRow = await service.PutAsync(container, blob, request.Body, contentType, ct);
     httpContext.Response.Headers.ETag = blobRow.ETag;
     return Results.Ok();
 });
 
-app.MapGet("/{container}/{blob}", async (string container, string blob, BlobService service, CancellationToken ct) =>
+app.MapGet("/{container}/{blob}", async (string container, string blob, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
     var result = await service.GetAsync(container, blob, ct);
     if (result is null)
     {
         return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
+    }
+    if (httpContext.Request.Headers.IfNoneMatch.ToString() == result.Value.Blob.ETag)
+    {
+        return Results.StatusCode(304);
     }
     return Results.Stream(result.Value.BlobStream, result.Value.Blob.ContentType);
 });
@@ -55,9 +67,17 @@ app.MapGet("/{container}", async (string container, BlobService service, Cancell
     return Results.Ok(items);
 });
 
-app.MapDelete("/{container}/{blob}", async (string container, string blob, BlobService service, CancellationToken ct) =>
+app.MapDelete("/{container}/{blob}", async (string container, string blob, BlobService service, HttpContext httpContext, CancellationToken ct) =>
 {
-
+    var ifMatch = httpContext.Request.Headers.IfMatch.ToString();
+    if (ifMatch != string.Empty)
+    {
+        var currentEtag = await service.GetBlobTagAsync(blob, container, ct);
+        if (currentEtag != ifMatch)
+        {
+            return Results.StatusCode(412);
+        }
+    }
     var deleted = await service.DeleteAsync(container, blob, ct);
     return deleted ? Results.NoContent() : Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
 

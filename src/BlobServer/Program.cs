@@ -1,4 +1,6 @@
+using System.ComponentModel.DataAnnotations;
 using System.Reflection.Metadata;
+using System.Text.Unicode;
 using BlobServer.Core.Errors;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Services;
@@ -48,10 +50,39 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
     {
         return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
     }
+
+    // None Match Header
     if (httpContext.Request.Headers.IfNoneMatch.ToString() == result.Value.Blob.ETag)
     {
         return Results.StatusCode(304);
     }
+
+    // If user include Range:bytes=x-y Header 
+    var rangeHeader = httpContext.Request.Headers.Range.ToString();
+    if (rangeHeader != string.Empty)
+    {
+        var parts = rangeHeader.Replace("bytes=", "");
+        var numbers = parts.Split("-");
+        var start = long.Parse(numbers[0]);
+        var end = long.Parse(numbers[1]);
+        var length = (int)(end - start + 1);
+        var bytes = new byte[length];
+
+        // Return 416 when range does not have not enough bytes / satisfiable 
+        if (start >= result.Value.Blob.Size || end >= result.Value.Blob.Size)
+        {
+            return Results.StatusCode(416);
+        }
+
+        result.Value.BlobStream.Seek(start, SeekOrigin.Begin);
+        await result.Value.BlobStream.ReadExactlyAsync(bytes, ct);
+        httpContext.Response.StatusCode = 206;
+        httpContext.Response.ContentType = result.Value.Blob.ContentType ?? "application/octet-stream";
+        httpContext.Response.Headers.ContentRange = $"bytes {start}-{end}/{result.Value.Blob.Size}";
+        await httpContext.Response.Body.WriteAsync(bytes, ct);
+        return Results.Empty;
+    }
+
     return Results.Stream(result.Value.BlobStream, result.Value.Blob.ContentType);
 });
 

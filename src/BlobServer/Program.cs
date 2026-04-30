@@ -1,7 +1,9 @@
+using System.Xml.Linq;
 using BlobServer.Core.Errors;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Services;
 using BlobServer.Core.Storage;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,7 +26,10 @@ app.MapPut("/{container}", async (string container, BlobService service, Cancell
 
 });
 
-app.MapPut("/{container}/{blob}", async (string container, string blob, string? comp, string? blockId, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
+app.MapPut("/{container}/{blob}", async (string container, string blob,
+                                        [FromQuery] string? comp,
+                                        [FromQuery] string? blockId, HttpRequest request,
+                                        BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
     if (comp == "block")
     {
@@ -33,6 +38,16 @@ app.MapPut("/{container}/{blob}", async (string container, string blob, string? 
             return Results.BadRequest(new BlobError("MissingBlockId", "blockId is required"));
         }
         await service.StageBlockAsync(container, blob, blockId, request.Body, ct);
+        return Results.Ok();
+    }
+
+    else if (comp == "blocklist")
+    {
+        var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
+        var doc = XDocument.Parse(body);
+        var blockIds = doc.Root!.Elements("Latest").Select(e => e.Value).ToList();
+        var committed = await service.CommitBlockListAsync(container, blob, blockIds, ct);
+        httpContext.Response.Headers.ETag = committed.ETag;
         return Results.Ok();
     }
     var contentType = request.ContentType;

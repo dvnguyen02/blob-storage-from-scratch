@@ -1,5 +1,6 @@
 namespace BlobServer.Core.Services;
 
+using System.Linq.Expressions;
 using System.Security.Cryptography;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Metadata.Entities;
@@ -119,6 +120,24 @@ public class BlobService
         return true;
     }
 
+    public async Task StageBlockAsync(string container, string blob, string blockId, Stream content, CancellationToken ct)
+    {
+        await store.WriteBlockAsync(container, blob, blockId, content, ct);
+    }
+
+    public async Task<Blob> CommitBlockListAsync(string container, string blob, List<string> blockIds, CancellationToken ct)
+    {
+        var buffer = new MemoryStream();
+        foreach (var blockId in blockIds)
+        {
+            var blockStream = await store.OpenBlockAsync(container, blob, blockId, ct);
+            await blockStream!.CopyToAsync(buffer, ct);
+        }
+        buffer.Position = 0;
+        return await PutAsync(container, blob, buffer, null, ct);
+    }
+
+    ////////////////// HELPER /////////////////////   
     public async Task<string?> GetBlobTagAsync(string name, string container, CancellationToken ct)
     {
         var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == container, ct);
@@ -132,10 +151,5 @@ public class BlobService
             return null;
         }
         return blobRow.ETag;
-    }
-
-    public async Task StageBlockAsync(string container, string blob, string blockId, Stream content, CancellationToken ct)
-    {
-        await store.WriteBlockAsync(container, blob, blockId, content, ct);
     }
 }

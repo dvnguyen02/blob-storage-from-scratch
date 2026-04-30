@@ -1,6 +1,3 @@
-using System.ComponentModel.DataAnnotations;
-using System.Reflection.Metadata;
-using System.Text.Unicode;
 using BlobServer.Core.Errors;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Services;
@@ -27,8 +24,17 @@ app.MapPut("/{container}", async (string container, BlobService service, Cancell
 
 });
 
-app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
+app.MapPut("/{container}/{blob}", async (string container, string blob, string? comp, string? blockId, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
+    if (comp == "block")
+    {
+        if (blockId is null)
+        {
+            return Results.BadRequest(new BlobError("MissingBlockId", "blockId is required"));
+        }
+        await service.StageBlockAsync(container, blob, blockId, request.Body, ct);
+        return Results.Ok();
+    }
     var contentType = request.ContentType;
     var currentEtag = await service.GetBlobTagAsync(blob, container, ct);
     // Check If Match header first 
@@ -42,6 +48,7 @@ app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequ
     httpContext.Response.Headers.ETag = blobRow.ETag;
     return Results.Ok();
 });
+
 
 app.MapGet("/{container}/{blob}", async (string container, string blob, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {

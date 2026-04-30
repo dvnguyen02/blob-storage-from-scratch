@@ -1,6 +1,5 @@
 namespace BlobServer.Core.Services;
 
-using System.Diagnostics.Tracing;
 using System.Security.Cryptography;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Metadata.Entities;
@@ -133,5 +132,10 @@ public class BlobService
             return null;
         }
         return blobRow.ETag;
+    }
+
+    public async Task StageBlockAsync(string container, string blob, string blockId, Stream content, CancellationToken ct)
+    {
+        await store.WriteBlockAsync(container, blob, blockId, content, ct);
     }
 }

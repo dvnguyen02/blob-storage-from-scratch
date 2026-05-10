@@ -46,9 +46,16 @@ app.MapPut("/{container}/{blob}", async (string container, string blob,
         var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
         var doc = XDocument.Parse(body);
         var blockIds = doc.Root!.Elements("Latest").Select(e => e.Value).ToList();
-        var committed = await service.CommitBlockListAsync(container, blob, blockIds, ct);
-        httpContext.Response.Headers.ETag = committed.ETag;
-        return Results.Ok();
+        try
+        {
+            var committed = await service.CommitBlockListAsync(container, blob, blockIds, ct);
+            httpContext.Response.Headers.ETag = committed.ETag;
+            return Results.Ok();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.BadRequest(new BlobError("InvalidBlockList", ex.Message));
+        }
     }
     var contentType = request.ContentType;
     var currentEtag = await service.GetBlobTagAsync(blob, container, ct);

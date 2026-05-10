@@ -131,7 +131,9 @@ public class BlobService
         foreach (var blockId in blockIds)
         {
             var blockStream = await store.OpenBlockAsync(container, blob, blockId, ct);
-            await blockStream!.CopyToAsync(buffer, ct);
+            if (blockStream is null)
+                throw new InvalidOperationException($"Block '{blockId}' not found.");
+            await blockStream.CopyToAsync(buffer, ct);
         }
         buffer.Position = 0;
         return await PutAsync(container, blob, buffer, null, ct);

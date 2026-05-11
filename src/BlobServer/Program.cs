@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
-
+var accountName = builder.Configuration["BlobAuth:AccountName"]!;
+var sharedKey = builder.Configuration["BlobAuth:SharedKey"]!;
 builder.Services.AddDbContext<BlobDbContext>(opt => opt.UseSqlite("Data Source=blobs.db"));
 builder.Services.AddSingleton<IBlobStore>(new FileSystemBlobStore("storage"));
 builder.Services.AddScoped<BlobService>();

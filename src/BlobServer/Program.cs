@@ -13,9 +13,10 @@ builder.Services.AddDbContext<BlobDbContext>(opt => opt.UseSqlite("Data Source=b
 builder.Services.AddSingleton<IBlobStore>(new FileSystemBlobStore("storage"));
 builder.Services.AddScoped<BlobService>();
 var app = builder.Build();
+
 using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<BlobDbContext>().Database.EnsureCreated();
-
+app.UseMiddleware<AuthHandler>();
 app.MapPut("/{container}", async (string container, BlobService service, CancellationToken ct) =>
 {
     var result = await service.CreateContainerAsync(container, ct);

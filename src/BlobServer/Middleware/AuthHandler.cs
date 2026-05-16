@@ -1,8 +1,5 @@
-using System.Net;
 using System.Security.Cryptography;
 using BlobServer.Core.Security;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 
 public class AuthHandler(RequestDelegate next, IConfiguration config)
 {

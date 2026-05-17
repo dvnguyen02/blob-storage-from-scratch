@@ -285,4 +285,12 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         return await _client.SendAsync(req);
     }
 
+    private async Task<HttpResponseMessage> SignedHeadAsync(string url)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Head, url);
+        SignRequest(req);
+        return await _client.SendAsync(req);
+
+    }
+
 }

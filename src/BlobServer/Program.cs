@@ -117,6 +117,22 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
     return Results.Stream(result.Value.BlobStream, result.Value.Blob.ContentType);
 });
 
+app.MapMethods("/{container}/{blob}", new[] { "HEAD" }, async (string container, string blob, BlobService service, HttpContext httpContext, CancellationToken ct) =>
+{
+    var result = await service.GetAsync(container, blob, ct);
+    if (result is null)
+    {
+        return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exsist."), statusCode: 404);
+    }
+    httpContext.Response.Headers.ETag = result.Value.Blob.ETag;
+    httpContext.Response.Headers.ContentLength = result.Value.Blob.Size;
+    httpContext.Response.ContentType = result.Value.Blob.ContentType;
+    httpContext.Response.Headers.LastModified = result.Value.Blob.ModifiedAt.ToString("R");
+    result.Value.BlobStream.Dispose();
+    return Results.Empty;
+
+});
+
 app.MapGet("/{container}", async (string container, BlobService service, CancellationToken ct) =>
 {
     var blobs = await service.ListAsync(container, ct);
@@ -144,6 +160,8 @@ app.MapDelete("/{container}/{blob}", async (string container, string blob, BlobS
     return deleted ? Results.NoContent() : Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
 
 });
+
+
 
 app.Run();
 

@@ -3,6 +3,8 @@
 using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
 using BlobServer.Core.Security;
+using FluentAssertions;
+
 public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly HttpClient _client;
@@ -248,6 +250,27 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var get = await _client.GetAsync(sasURl);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, get.StatusCode);
 
+    }
+
+    [Fact]
+    public async Task HeadExistingBlobReturnsHeadersNoBody()
+    {
+        var content = new StringContent("head test", Encoding.UTF8, "test/plain");
+        byte[] expectedBytes = Encoding.UTF8.GetBytes("head test");
+        var put = await SignedPutAsync("/testcontainer/headtest.txt", content);
+        var head = await SignedHeadAsync("/testcontainer/headtest.txt");
+        Assert.Equal(System.Net.HttpStatusCode.OK, head.StatusCode);
+        Assert.Equal(expectedBytes.Length, head.Content.Headers.ContentLength);
+        Assert.NotNull(head.Headers.ETag);
+        var bodyBytes = await head.Content.ReadAsByteArrayAsync();
+        Assert.Empty(bodyBytes);
+    }
+
+    [Fact]
+    public async Task HeadMissingBlobReturns404()
+    {
+        var head = await SignedHeadAsync("/notexistingcontainer67/notexistingblob67");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, head.StatusCode);
     }
 
 

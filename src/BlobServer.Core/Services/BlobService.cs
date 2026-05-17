@@ -1,11 +1,12 @@
 namespace BlobServer.Core.Services;
 
-using System.Linq.Expressions;
 using System.Security.Cryptography;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Metadata.Entities;
 using BlobServer.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+
+public enum DeleteContainerResult { Deleted, NotFound, NotEmpty }
 public class BlobService
 {
     private readonly BlobDbContext db;
@@ -118,6 +119,47 @@ public class BlobService
         await db.Containers.AddAsync(container);
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    // TODO(human): implement DeleteContainerAsync
+    //
+    // Signature:
+    //   public async Task<DeleteContainerResult> DeleteContainerAsync(string name, CancellationToken ct)
+    //
+    // Steps:
+    // 1. Look up the container row by name.
+    //      var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == name, ct);
+    //    If null → return DeleteContainerResult.NotFound;
+    //
+    // 2. Check if the container has any blobs.
+    //      var hasBlobs = await db.Blobs.AnyAsync(b => b.ContainerId == containerRow.Id, ct);
+    //    If true → return DeleteContainerResult.NotEmpty;
+    //
+    // 3. Remove the container row and save.
+    //      db.Containers.Remove(containerRow);
+    //      await db.SaveChangesAsync(ct);
+    //      return DeleteContainerResult.Deleted;
+    //
+    // Also: define the enum at the top of this file (above `public class BlobService`):
+    //   public enum DeleteContainerResult { Deleted, NotFound, NotEmpty }
+
+    public async Task<DeleteContainerResult> DeleteContainerAsync(string name, CancellationToken ct)
+    {
+        var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == name, ct);
+        if (containerRow is null)
+        {
+            return DeleteContainerResult.NotFound;
+        }
+
+        var hasBlobs = await db.Blobs.AnyAsync(b => b.ContainerId == containerRow.Id, ct);
+        if (hasBlobs)
+        {
+            return DeleteContainerResult.NotEmpty;
+        }
+
+        db.Containers.Remove(containerRow);
+        await db.SaveChangesAsync(ct);
+        return DeleteContainerResult.Deleted;
     }
 
     public async Task StageBlockAsync(string container, string blob, string blockId, Stream content, CancellationToken ct)

@@ -273,6 +273,30 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(System.Net.HttpStatusCode.NotFound, head.StatusCode);
     }
 
+    [Fact]
+    public async Task DeleteMissingContainerReturns404()
+    {
+        var del = await SignedDeleteAsync("/deletemissing"); // not exisiting container
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, del.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteNotEmptyContainerReturns409()
+    {
+        await SignedPutAsync("/deletenotempty/someblob.txt", new StringContent("delete not empty container.", Encoding.UTF8, "text/plain"));
+        var del = await SignedDeleteAsync("/deletenotempty");
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, del.StatusCode);
+
+    }
+
+    [Fact]
+    public async Task DeleteEmptyContainerReturns204()
+    {
+        await SignedPutAsync("/deleteempty", new StringContent(""));
+        var del = await SignedDeleteAsync("/deleteempty");
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, del.StatusCode);
+    }
+
 
     ///
     /// 

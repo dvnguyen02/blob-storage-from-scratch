@@ -28,6 +28,40 @@ app.MapPut("/{container}", async (string container, BlobService service, Cancell
 
 });
 
+// TODO(human): implement DELETE /{container}
+//
+// Call service.DeleteContainerAsync(container, ct) and map the three outcomes:
+//   DeleteContainerResult.Deleted   → Results.NoContent()                    // 204
+//   DeleteContainerResult.NotFound  → Results.Json(new BlobError(
+//                                       "ContainerNotFound",
+//                                       "The specified container does not exist."), statusCode: 404)
+//   DeleteContainerResult.NotEmpty  → Results.Json(new BlobError(
+//                                       "ContainerNotEmpty",
+//                                       "The specified container is not empty."), statusCode: 409)
+//
+// Use a switch expression over the result — it's exhaustive (the compiler will warn
+// if you forget a case). Pattern:
+//
+//   return result switch
+//   {
+//       DeleteContainerResult.Deleted  => Results.NoContent(),
+//       DeleteContainerResult.NotFound => Results.Json(...),
+//       DeleteContainerResult.NotEmpty => Results.Json(...),
+//       _ => Results.StatusCode(500),
+//   };
+
+app.MapDelete("/{container}", async (string container, BlobService service, CancellationToken ct) =>
+{
+    var result = await service.DeleteContainerAsync(container, ct);
+    return result switch
+    {
+        DeleteContainerResult.Deleted => Results.NoContent(),
+        DeleteContainerResult.NotFound => Results.Json(new BlobError("ContainerNotFound", "The container does not exists."), statusCode: 404),
+        DeleteContainerResult.NotEmpty => Results.Json(new BlobError("ContainerNotEmpty", "The specified container is not emtpy."), statusCode: 409),
+        _ => Results.StatusCode(500),
+    };
+});
+
 app.MapPut("/{container}/{blob}", async (string container, string blob,
                                         [FromQuery] string? comp,
                                         [FromQuery] string? blockId, HttpRequest request,

@@ -116,13 +116,31 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
         return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
     }
 
-    // None Match Header
-    if (httpContext.Request.Headers.IfNoneMatch.ToString() == result.Value.Blob.ETag)
+    var ifNoneMatch = httpContext.Request.Headers.IfNoneMatch.ToString();
+    if (ifNoneMatch != string.Empty)
     {
-        return Results.StatusCode(304);
+        if (ifNoneMatch == result.Value.Blob.ETag)
+        {
+            return Results.StatusCode(304);
+        }
+    }
+    else
+    {
+        var ifModSince = httpContext.Request.Headers.IfModifiedSince.ToString();
+        if (ifModSince != string.Empty &&
+            DateTimeOffset.TryParseExact(ifModSince, "R",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var since)
+            && DateTime.SpecifyKind(result.Value.Blob.ModifiedAt, DateTimeKind.Utc) <= since)
+        {
+            return Results.StatusCode(304);
+        }
     }
 
-    // If user include Range:bytes=x-y Header 
+
+
+    // If user include Range:bytes=x-y Header
     var rangeHeader = httpContext.Request.Headers.Range.ToString();
     if (rangeHeader != string.Empty)
     {
@@ -158,6 +176,30 @@ app.MapMethods("/{container}/{blob}", new[] { "HEAD" }, async (string container,
     {
         return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exsist."), statusCode: 404);
     }
+
+    var ifNoneMatch = httpContext.Request.Headers.IfNoneMatch.ToString();
+    if (ifNoneMatch != string.Empty)
+    {
+        if (ifNoneMatch == result.Value.Blob.ETag)
+        {
+            result.Value.BlobStream.Dispose();
+            return Results.StatusCode(304);
+        }
+    }
+    else
+    {
+        var ifModSince = httpContext.Request.Headers.IfModifiedSince.ToString();
+        if (ifModSince != string.Empty &&
+            DateTimeOffset.TryParseExact(ifModSince, "R",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var since) && DateTime.SpecifyKind(result.Value.Blob.ModifiedAt, DateTimeKind.Utc) <= since)
+        {
+            result.Value.BlobStream.Dispose();
+            return Results.StatusCode(304);
+        }
+    }
+
     httpContext.Response.Headers.ETag = result.Value.Blob.ETag;
     httpContext.Response.Headers.ContentLength = result.Value.Blob.Size;
     httpContext.Response.ContentType = result.Value.Blob.ContentType;

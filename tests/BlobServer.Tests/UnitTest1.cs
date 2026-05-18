@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
 using BlobServer.Core.Security;
 using FluentAssertions;
+using System.Net.Http.Headers;
 
 public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 {
@@ -295,6 +296,53 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         await SignedPutAsync("/deleteempty", new StringContent(""));
         var del = await SignedDeleteAsync("/deleteempty");
         Assert.Equal(System.Net.HttpStatusCode.NoContent, del.StatusCode);
+    }
+    [Fact]
+    public async Task IfModifedSinceFutureReturns304()
+    {
+        await SignedPutAsync("/ifmodfuture/returns304.txt", new StringContent("hello"));
+        var request = new HttpRequestMessage(HttpMethod.Get, "/ifmodfuture/returns304.txt");
+        request.Headers.IfModifiedSince = DateTimeOffset.UtcNow.AddHours(1);
+        SignRequest(request);
+        var result = await _client.SendAsync(request);
+        Assert.Equal(System.Net.HttpStatusCode.NotModified, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task IfModifiedSincePastReturns200()
+    {
+        await SignedPutAsync("/ifmodsincepast/returns200.txt", new StringContent("ifmodsincepast"));
+        var request = new HttpRequestMessage(HttpMethod.Get, "/ifmodsincepast/returns200.txt");
+        request.Headers.IfModifiedSince = DateTimeOffset.UtcNow.AddHours(-1);
+        SignRequest(request);
+        var result = await _client.SendAsync(request);
+        Assert.Equal(System.Net.HttpStatusCode.OK, result.StatusCode);
+
+    }
+
+    [Fact]
+    public async Task MalformedIfModifiedSinceReturns200()
+    {
+        await SignedPutAsync("/malformedifmodifiedsicne/returns200.txt", new StringContent("malformed"));
+        var request = new HttpRequestMessage(HttpMethod.Get, "/malformedifmodifiedsicne/returns200.txt");
+        request.Headers.TryAddWithoutValidation("If-Modified-Since", "not-a-date");
+        SignRequest(request);
+        var result = await _client.SendAsync(request);
+        Assert.Equal(System.Net.HttpStatusCode.OK, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task IfNoneMatchWinsOverIfModifiedSince()
+    {
+        await SignedPutAsync("/ifnonematchwinsovermodifiedsince/toolongbruh.txt", new StringContent("something"));
+        var request = new HttpRequestMessage(HttpMethod.Get, "/ifnonematchwinsovermodifiedsince/toolongbruh.txt");
+        request.Headers.IfModifiedSince = DateTimeOffset.UtcNow.AddHours(1); // normally this would return 304
+        request.Headers.IfNoneMatch.Add(new EntityTagHeaderValue("\"wrong-etag\""));
+        SignRequest(request);
+        var result = await _client.SendAsync(request);
+        Assert.Equal(System.Net.HttpStatusCode.OK, result.StatusCode);
+
+
     }
 
 

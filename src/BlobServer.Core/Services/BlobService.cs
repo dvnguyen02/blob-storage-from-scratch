@@ -1,9 +1,11 @@
 namespace BlobServer.Core.Services;
 
 using System.Security.Cryptography;
+using System.Text.Json;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Metadata.Entities;
 using BlobServer.Core.Storage;
+using BlobServer.Core.Errors;
 using Microsoft.EntityFrameworkCore;
 
 public enum DeleteContainerResult { Deleted, NotFound, NotEmpty }
@@ -17,7 +19,10 @@ public class BlobService
         this.store = store;
     }
 
-    public async Task<Blob> PutAsync(string container, string name, Stream content, string? contentType, CancellationToken ct)
+    public async Task<Blob> PutAsync(string container, string name, Stream content,
+                                    string? contentType, Dictionary<string, string>? metadata,
+                                    string? expectedMd5,
+                                    CancellationToken ct)
     {
         var containerRow = await db.Containers.FirstOrDefaultAsync(c => c.Name == container, ct);
         if (containerRow is null)
@@ -34,8 +39,23 @@ public class BlobService
 
         var etag = MD5.HashData(buffer.ToArray());
         string base64 = $"\"{Convert.ToBase64String(etag)}\"";
-
-
+        if (expectedMd5 is not null && expectedMd5 != "")
+        {
+            var actualMd5 = Convert.ToBase64String(etag);
+            if (actualMd5 != expectedMd5)
+            {
+                throw new Md5MismatchException("The Content-MD5 header did not match the body's MD5.");
+            }
+        }
+        string? metadataJson;
+        if (metadata is null || metadata.Count == 0)
+        {
+            metadataJson = null;
+        }
+        else
+        {
+            metadataJson = JsonSerializer.Serialize(metadata);
+        }
         await store.WriteAsync(container, name, buffer, ct);
         var blobRow = await db.Blobs.FirstOrDefaultAsync(b => b.ContainerId == containerRow.Id && b.Name == name, ct);
         if (blobRow is null)
@@ -48,7 +68,8 @@ public class BlobService
                 ContentType = contentType,
                 ETag = base64,
                 CreatedAt = DateTime.UtcNow,
-                ModifiedAt = DateTime.UtcNow
+                ModifiedAt = DateTime.UtcNow,
+                Metadata = metadataJson
             };
             db.Blobs.Add(blobRow);
             await db.SaveChangesAsync(ct);
@@ -60,6 +81,7 @@ public class BlobService
             blobRow.ETag = base64;
             blobRow.ContentType = contentType;
             blobRow.ModifiedAt = DateTime.UtcNow;
+            blobRow.Metadata = metadataJson;
             await db.SaveChangesAsync(ct);
         }
 
@@ -156,7 +178,7 @@ public class BlobService
             await blockStream.CopyToAsync(buffer, ct);
         }
         buffer.Position = 0;
-        return await PutAsync(container, blob, buffer, null, ct);
+        return await PutAsync(container, blob, buffer, null, null, null, ct);
     }
 
     ////////////////// HELPER /////////////////////   

@@ -1,3 +1,5 @@
+using System.Linq.Expressions;
+using System.Text.Json;
 using System.Xml.Linq;
 using BlobServer.Core.Errors;
 using BlobServer.Core.Metadata;
@@ -5,6 +7,7 @@ using BlobServer.Core.Services;
 using BlobServer.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SQLitePCL;
 
 var builder = WebApplication.CreateBuilder(args);
 var accountName = builder.Configuration["BlobAuth:AccountName"]!;
@@ -27,28 +30,6 @@ app.MapPut("/{container}", async (string container, BlobService service, Cancell
     return Results.Conflict(new BlobError("ContainerAlreadyExists", "The specified container already exsists."));
 
 });
-
-// TODO(human): implement DELETE /{container}
-//
-// Call service.DeleteContainerAsync(container, ct) and map the three outcomes:
-//   DeleteContainerResult.Deleted   → Results.NoContent()                    // 204
-//   DeleteContainerResult.NotFound  → Results.Json(new BlobError(
-//                                       "ContainerNotFound",
-//                                       "The specified container does not exist."), statusCode: 404)
-//   DeleteContainerResult.NotEmpty  → Results.Json(new BlobError(
-//                                       "ContainerNotEmpty",
-//                                       "The specified container is not empty."), statusCode: 409)
-//
-// Use a switch expression over the result — it's exhaustive (the compiler will warn
-// if you forget a case). Pattern:
-//
-//   return result switch
-//   {
-//       DeleteContainerResult.Deleted  => Results.NoContent(),
-//       DeleteContainerResult.NotFound => Results.Json(...),
-//       DeleteContainerResult.NotEmpty => Results.Json(...),
-//       _ => Results.StatusCode(500),
-//   };
 
 app.MapDelete("/{container}", async (string container, BlobService service, CancellationToken ct) =>
 {
@@ -94,6 +75,7 @@ app.MapPut("/{container}/{blob}", async (string container, string blob,
         }
     }
     var contentType = request.ContentType;
+    var contentMd5 = httpContext.Request.Headers.ContentMD5.ToString();
     var currentEtag = await service.GetBlobTagAsync(blob, container, ct);
     // Check If Match header first 
     var ifMatch = httpContext.Request.Headers.IfMatch.ToString();
@@ -101,10 +83,30 @@ app.MapPut("/{container}/{blob}", async (string container, string blob,
     {
         return Results.StatusCode(412);
     }
+
+    // If pass metadata header
+    var metadata = new Dictionary<string, string>();
+    foreach (var header in httpContext.Request.Headers)
+    {
+        if (header.Key.StartsWith("x-ms-meta-", StringComparison.OrdinalIgnoreCase))
+        {
+            var key = header.Key.Substring("x-ms-meta-".Length).ToLowerInvariant();
+            var value = header.Value.ToString();
+            metadata[key] = value;
+        }
+    }
     // Then write
-    var blobRow = await service.PutAsync(container, blob, request.Body, contentType, ct);
-    httpContext.Response.Headers.ETag = blobRow.ETag;
-    return Results.Ok();
+    try
+    {
+        var blobRow = await service.PutAsync(container, blob, request.Body, contentType, metadata, contentMd5, ct);
+        httpContext.Response.Headers.ETag = blobRow.ETag;
+        return Results.Ok();
+    }
+    catch (Md5MismatchException ex)
+    {
+        return Results.BadRequest(new BlobError("Md5Mismatch", ex.Message));
+    }
+
 });
 
 
@@ -137,7 +139,16 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
             return Results.StatusCode(304);
         }
     }
+    var metadata = result.Value.Blob.Metadata;
 
+    if (metadata is not null)
+    {
+        var metaDict = JsonSerializer.Deserialize<Dictionary<string, string>>(metadata);
+        foreach (var header in metaDict)
+        {
+            httpContext.Response.Headers["x-ms-meta-" + header.Key] = header.Value;
+        }
+    }
 
 
     // If user include Range:bytes=x-y Header
@@ -200,6 +211,15 @@ app.MapMethods("/{container}/{blob}", new[] { "HEAD" }, async (string container,
         }
     }
 
+    var metadata = result.Value.Blob.Metadata;
+    if (metadata is not null)
+    {
+        var metaDict = JsonSerializer.Deserialize<Dictionary<string, string>>(metadata);
+        foreach (var header in metaDict)
+        {
+            httpContext.Response.Headers["x-ms-meta-" + header.Key] = header.Value;
+        }
+    }
     httpContext.Response.Headers.ETag = result.Value.Blob.ETag;
     httpContext.Response.Headers.ContentLength = result.Value.Blob.Size;
     httpContext.Response.ContentType = result.Value.Blob.ContentType;

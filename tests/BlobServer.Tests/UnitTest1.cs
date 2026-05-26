@@ -5,6 +5,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using BlobServer.Core.Security;
 using FluentAssertions;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using BlobServer.Core.Errors;
+using Microsoft.VisualStudio.TestPlatform.Common.Utilities;
 
 public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 {
@@ -34,7 +37,9 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         //          new System.Net.Http.Headers.AuthenticationHeaderValue("SharedKey", $"{AccountName}:{sig}");
         request.Headers.Date = DateTimeOffset.UtcNow;
         var method = request.Method.Method;
-        var contentMd5 = "";
+        var hash = request.Content?.Headers.ContentMD5;
+        var contentMd5 = hash is not null ? Convert.ToBase64String(hash) : "";
+
         string contentType = request.Content?.Headers.ContentType?.ToString() ?? "";
         var date = request.Headers.Date?.ToString("R") ?? "";
         var uriString = request.RequestUri!.ToString();
@@ -89,7 +94,7 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // 4. Assert status is 206
         // 5. Assert body is "Hello"
         var content = new StringContent("Hello World");
-        await _client.PutAsync("/testcontainer/rangeread.txt", content);
+        await SignedPutAsync("/testcontainer/rangeread.txt", content);
         var request = new HttpRequestMessage(HttpMethod.Get, "/testcontainer/rangeread.txt");
         request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 4);
         SignRequest(request);
@@ -343,6 +348,87 @@ public class BLobEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(System.Net.HttpStatusCode.OK, result.StatusCode);
 
 
+    }
+
+    [Fact]
+    public async Task PutBlobWithXmsMeta()
+    {
+        var url = "/metacontainer/metablob.txt";
+
+        // Build the PUT manually so we can attach x-ms-meta-* headers.
+        // SignedPutAsync doesn't expose a way to add extra headers, so we
+        // do the same dance it does: build, sign, send.
+        var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = new StringContent("hello", Encoding.UTF8, "text/plain")
+        };
+        request.Headers.TryAddWithoutValidation("x-ms-meta-author", "Alice");
+        request.Headers.TryAddWithoutValidation("x-ms-meta-purpose", "testing");
+        SignRequest(request);
+        var put = await _client.SendAsync(request);
+        put.EnsureSuccessStatusCode();
+
+        // GET it back and assert the headers come back on the response.
+        var get = await SignedGetAsync(url);
+        get.EnsureSuccessStatusCode();
+
+        // Headers.GetValues returns IEnumerable<string> — .First() pulls the one value.
+        get.Headers.GetValues("x-ms-meta-author").First().Should().Be("Alice");
+        get.Headers.GetValues("x-ms-meta-purpose").First().Should().Be("testing");
+    }
+
+    [Fact]
+    public async Task HeadBlobWithXmsMeta()
+    {
+        var url = "/metacontainer/metahead.txt";
+
+        var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = new StringContent("hello", Encoding.UTF8, "text/plain")
+        };
+        request.Headers.TryAddWithoutValidation("x-ms-meta-author", "Bob");
+        SignRequest(request);
+        (await _client.SendAsync(request)).EnsureSuccessStatusCode();
+
+        var head = await SignedHeadAsync(url);
+        head.EnsureSuccessStatusCode();
+
+        head.Headers.GetValues("x-ms-meta-author").First().Should().Be("Bob");
+    }
+
+    [Fact]
+    public async Task PutBlobWithValidContentMd5()
+    {
+        var content = new StringContent("hello", Encoding.UTF8, "text/plain");
+        string path = "/md5container/valid.txt";
+        var bodyBytes = Encoding.UTF8.GetBytes("hello");
+        var md5Hash = MD5.HashData(bodyBytes);
+        var request = new HttpRequestMessage(HttpMethod.Put, path)
+        {
+            Content = content
+        };
+        request.Content.Headers.ContentMD5 = md5Hash;
+        SignRequest(request);
+        var put = await _client.SendAsync(request);
+        put.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task WrongContentMd5Returns400()
+    {
+        var content = new StringContent("hello", Encoding.UTF8, "text/plain");
+        string path = "/md5container/invalid.txt";
+        var wrongHash = MD5.HashData(Encoding.UTF8.GetBytes("somethingelse"));
+        var request = new HttpRequestMessage(HttpMethod.Put, path)
+        {
+            Content = content
+        };
+        request.Content.Headers.ContentMD5 = wrongHash;
+        SignRequest(request);
+        var put = await _client.SendAsync(request);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, put.StatusCode);
+        var body = await put.Content.ReadAsStringAsync();
+        Assert.Contains("Md5Mismatch", body);
     }
 
 

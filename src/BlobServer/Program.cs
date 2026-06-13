@@ -1,21 +1,25 @@
-using System.ComponentModel.DataAnnotations;
-using System.Reflection.Metadata;
-using System.Text.Unicode;
+using System.Linq.Expressions;
+using System.Text.Json;
+using System.Xml.Linq;
 using BlobServer.Core.Errors;
 using BlobServer.Core.Metadata;
 using BlobServer.Core.Services;
 using BlobServer.Core.Storage;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SQLitePCL;
 
 var builder = WebApplication.CreateBuilder(args);
-
+var accountName = builder.Configuration["BlobAuth:AccountName"]!;
+var sharedKey = builder.Configuration["BlobAuth:SharedKey"]!;
 builder.Services.AddDbContext<BlobDbContext>(opt => opt.UseSqlite("Data Source=blobs.db"));
 builder.Services.AddSingleton<IBlobStore>(new FileSystemBlobStore("storage"));
 builder.Services.AddScoped<BlobService>();
 var app = builder.Build();
+
 using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<BlobDbContext>().Database.EnsureCreated();
-
+app.UseMiddleware<AuthHandler>();
 app.MapPut("/{container}", async (string container, BlobService service, CancellationToken ct) =>
 {
     var result = await service.CreateContainerAsync(container, ct);
@@ -27,9 +31,51 @@ app.MapPut("/{container}", async (string container, BlobService service, Cancell
 
 });
 
-app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequest request, BlobService service, CancellationToken ct, HttpContext httpContext) =>
+app.MapDelete("/{container}", async (string container, BlobService service, CancellationToken ct) =>
 {
+    var result = await service.DeleteContainerAsync(container, ct);
+    return result switch
+    {
+        DeleteContainerResult.Deleted => Results.NoContent(),
+        DeleteContainerResult.NotFound => Results.Json(new BlobError("ContainerNotFound", "The container does not exists."), statusCode: 404),
+        DeleteContainerResult.NotEmpty => Results.Json(new BlobError("ContainerNotEmpty", "The specified container is not emtpy."), statusCode: 409),
+        _ => Results.StatusCode(500),
+    };
+});
+
+app.MapPut("/{container}/{blob}", async (string container, string blob,
+                                        [FromQuery] string? comp,
+                                        [FromQuery] string? blockId, HttpRequest request,
+                                        BlobService service, CancellationToken ct, HttpContext httpContext) =>
+{
+    if (comp == "block")
+    {
+        if (blockId is null)
+        {
+            return Results.BadRequest(new BlobError("MissingBlockId", "blockId is required"));
+        }
+        await service.StageBlockAsync(container, blob, blockId, request.Body, ct);
+        return Results.Ok();
+    }
+
+    else if (comp == "blocklist")
+    {
+        var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
+        var doc = XDocument.Parse(body);
+        var blockIds = doc.Root!.Elements("Latest").Select(e => e.Value).ToList();
+        try
+        {
+            var committed = await service.CommitBlockListAsync(container, blob, blockIds, ct);
+            httpContext.Response.Headers.ETag = committed.ETag;
+            return Results.Ok();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.BadRequest(new BlobError("InvalidBlockList", ex.Message));
+        }
+    }
     var contentType = request.ContentType;
+    var contentMd5 = httpContext.Request.Headers.ContentMD5.ToString();
     var currentEtag = await service.GetBlobTagAsync(blob, container, ct);
     // Check If Match header first 
     var ifMatch = httpContext.Request.Headers.IfMatch.ToString();
@@ -37,11 +83,32 @@ app.MapPut("/{container}/{blob}", async (string container, string blob, HttpRequ
     {
         return Results.StatusCode(412);
     }
+
+    // If pass metadata header
+    var metadata = new Dictionary<string, string>();
+    foreach (var header in httpContext.Request.Headers)
+    {
+        if (header.Key.StartsWith("x-ms-meta-", StringComparison.OrdinalIgnoreCase))
+        {
+            var key = header.Key.Substring("x-ms-meta-".Length).ToLowerInvariant();
+            var value = header.Value.ToString();
+            metadata[key] = value;
+        }
+    }
     // Then write
-    var blobRow = await service.PutAsync(container, blob, request.Body, contentType, ct);
-    httpContext.Response.Headers.ETag = blobRow.ETag;
-    return Results.Ok();
+    try
+    {
+        var blobRow = await service.PutAsync(container, blob, request.Body, contentType, metadata, contentMd5, ct);
+        httpContext.Response.Headers.ETag = blobRow.ETag;
+        return Results.Ok();
+    }
+    catch (Md5MismatchException ex)
+    {
+        return Results.BadRequest(new BlobError("Md5Mismatch", ex.Message));
+    }
+
 });
+
 
 app.MapGet("/{container}/{blob}", async (string container, string blob, BlobService service, CancellationToken ct, HttpContext httpContext) =>
 {
@@ -51,13 +118,40 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
         return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
     }
 
-    // None Match Header
-    if (httpContext.Request.Headers.IfNoneMatch.ToString() == result.Value.Blob.ETag)
+    var ifNoneMatch = httpContext.Request.Headers.IfNoneMatch.ToString();
+    if (ifNoneMatch != string.Empty)
     {
-        return Results.StatusCode(304);
+        if (ifNoneMatch == result.Value.Blob.ETag)
+        {
+            return Results.StatusCode(304);
+        }
+    }
+    else
+    {
+        var ifModSince = httpContext.Request.Headers.IfModifiedSince.ToString();
+        if (ifModSince != string.Empty &&
+            DateTimeOffset.TryParseExact(ifModSince, "R",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var since)
+            && DateTime.SpecifyKind(result.Value.Blob.ModifiedAt, DateTimeKind.Utc) <= since)
+        {
+            return Results.StatusCode(304);
+        }
+    }
+    var metadata = result.Value.Blob.Metadata;
+
+    if (metadata is not null)
+    {
+        var metaDict = JsonSerializer.Deserialize<Dictionary<string, string>>(metadata);
+        foreach (var header in metaDict)
+        {
+            httpContext.Response.Headers["x-ms-meta-" + header.Key] = header.Value;
+        }
     }
 
-    // If user include Range:bytes=x-y Header 
+
+    // If user include Range:bytes=x-y Header
     var rangeHeader = httpContext.Request.Headers.Range.ToString();
     if (rangeHeader != string.Empty)
     {
@@ -84,6 +178,55 @@ app.MapGet("/{container}/{blob}", async (string container, string blob, BlobServ
     }
 
     return Results.Stream(result.Value.BlobStream, result.Value.Blob.ContentType);
+});
+
+app.MapMethods("/{container}/{blob}", new[] { "HEAD" }, async (string container, string blob, BlobService service, HttpContext httpContext, CancellationToken ct) =>
+{
+    var result = await service.GetAsync(container, blob, ct);
+    if (result is null)
+    {
+        return Results.Json(new BlobError("BlobNotFound", "The specified blob does not exsist."), statusCode: 404);
+    }
+
+    var ifNoneMatch = httpContext.Request.Headers.IfNoneMatch.ToString();
+    if (ifNoneMatch != string.Empty)
+    {
+        if (ifNoneMatch == result.Value.Blob.ETag)
+        {
+            result.Value.BlobStream.Dispose();
+            return Results.StatusCode(304);
+        }
+    }
+    else
+    {
+        var ifModSince = httpContext.Request.Headers.IfModifiedSince.ToString();
+        if (ifModSince != string.Empty &&
+            DateTimeOffset.TryParseExact(ifModSince, "R",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var since) && DateTime.SpecifyKind(result.Value.Blob.ModifiedAt, DateTimeKind.Utc) <= since)
+        {
+            result.Value.BlobStream.Dispose();
+            return Results.StatusCode(304);
+        }
+    }
+
+    var metadata = result.Value.Blob.Metadata;
+    if (metadata is not null)
+    {
+        var metaDict = JsonSerializer.Deserialize<Dictionary<string, string>>(metadata);
+        foreach (var header in metaDict)
+        {
+            httpContext.Response.Headers["x-ms-meta-" + header.Key] = header.Value;
+        }
+    }
+    httpContext.Response.Headers.ETag = result.Value.Blob.ETag;
+    httpContext.Response.Headers.ContentLength = result.Value.Blob.Size;
+    httpContext.Response.ContentType = result.Value.Blob.ContentType;
+    httpContext.Response.Headers.LastModified = result.Value.Blob.ModifiedAt.ToString("R");
+    result.Value.BlobStream.Dispose();
+    return Results.Empty;
+
 });
 
 app.MapGet("/{container}", async (string container, BlobService service, CancellationToken ct) =>
@@ -113,6 +256,8 @@ app.MapDelete("/{container}/{blob}", async (string container, string blob, BlobS
     return deleted ? Results.NoContent() : Results.Json(new BlobError("BlobNotFound", "The specified blob does not exist."), statusCode: 404);
 
 });
+
+
 
 app.Run();
 

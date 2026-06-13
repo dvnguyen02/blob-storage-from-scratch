@@ -11,4 +11,5 @@ public class Blob
     public required string ETag { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime ModifiedAt { get; set; }
+    public string? Metadata { get; set; }
 }
